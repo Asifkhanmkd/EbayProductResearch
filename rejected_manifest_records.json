@@ -1,0 +1,92 @@
+[
+  {
+    "timestamp": "2026-08-01T12:03:22.833Z",
+    "gtin": "UNKNOWN",
+    "name": "JML FINISHING TOUCH FLAWLESS RECHARGABLE",
+    "wholesaleCostPerUnit": 5.63,
+    "maxAllowableSourcingCost": 2.87,
+    "targetResalePriceFloor": 8,
+    "reason": "MARGIN_COMPRESSION: Cost (£5.63) exceeds MASC ceiling (£2.87)",
+    "extractedMarketMetrics": {
+      "medianActiveAskingPrice": 21.49,
+      "medianRealizedSoldPrice": 8,
+      "liveActiveCompetitorCount": 5,
+      "historicalTransactionsCollected": 51
+    }
+  },
+  {
+    "timestamp": "2026-08-01T12:03:22.835Z",
+    "gtin": "UNKNOWN",
+    "name": "PHIL SMITH SALON COLLECTION STRAIGHTENER",
+    "wholesaleCostPerUnit": 5.63,
+    "maxAllowableSourcingCost": 4.26995,
+    "targetResalePriceFloor": 9.83,
+    "reason": "MARGIN_COMPRESSION: Cost (£5.63) exceeds MASC ceiling (£4.27)",
+    "extractedMarketMetrics": {
+      "medianActiveAskingPrice": 9.675,
+      "medianRealizedSoldPrice": 9.83,
+      "liveActiveCompetitorCount": 42,
+      "historicalTransactionsCollected": 53
+    }
+  },
+  {
+    "timestamp": "2026-08-01T12:03:22.835Z",
+    "gtin": "UNKNOWN",
+    "name": "JML FINISHING TOUCH FLAWLESS",
+    "wholesaleCostPerUnit": 5.63,
+    "maxAllowableSourcingCost": 1.649825,
+    "targetResalePriceFloor": 6.405,
+    "reason": "MARGIN_COMPRESSION: Cost (£5.63) exceeds MASC ceiling (£1.65)",
+    "extractedMarketMetrics": {
+      "medianActiveAskingPrice": 7.95,
+      "medianRealizedSoldPrice": 6.405,
+      "liveActiveCompetitorCount": 41,
+      "historicalTransactionsCollected": 52
+    }
+  },
+  {
+    "timestamp": "2026-08-01T12:03:22.835Z",
+    "gtin": "UNKNOWN",
+    "name": "PHIL SMITH WHITE HAIR STRAIGHTENER",
+    "wholesaleCostPerUnit": 5.63,
+    "maxAllowableSourcingCost": 5.5474999999999985,
+    "targetResalePriceFloor": 11.5,
+    "reason": "MARGIN_COMPRESSION: Cost (£5.63) exceeds MASC ceiling (£5.55)",
+    "extractedMarketMetrics": {
+      "medianActiveAskingPrice": 8.66,
+      "medianRealizedSoldPrice": 11.5,
+      "liveActiveCompetitorCount": 47,
+      "historicalTransactionsCollected": 53
+    }
+  },
+  {
+    "timestamp": "2026-08-01T12:03:22.835Z",
+    "gtin": "UNKNOWN",
+    "name": "PHIL SMITH 2000W HAIR DRYER",
+    "wholesaleCostPerUnit": 5.63,
+    "maxAllowableSourcingCost": 1.0043499999999985,
+    "targetResalePriceFloor": 10.79,
+    "reason": "MARGIN_COMPRESSION: Cost (£5.63) exceeds MASC ceiling (£1.00)",
+    "extractedMarketMetrics": {
+      "medianActiveAskingPrice": 10.265,
+      "medianRealizedSoldPrice": 10.79,
+      "liveActiveCompetitorCount": 12,
+      "historicalTransactionsCollected": 57
+    }
+  },
+  {
+    "timestamp": "2026-08-01T12:03:22.835Z",
+    "gtin": "UNKNOWN",
+    "name": "PHIL SMITH WHITE TRAVEL DRYER",
+    "wholesaleCostPerUnit": 5.63,
+    "maxAllowableSourcingCost": 5.012,
+    "targetResalePriceFloor": 10.8,
+    "reason": "MARGIN_COMPRESSION: Cost (£5.63) exceeds MASC ceiling (£5.01)",
+    "extractedMarketMetrics": {
+      "medianActiveAskingPrice": 17.99,
+      "medianRealizedSoldPrice": 10.8,
+      "liveActiveCompetitorCount": 5,
+      "historicalTransactionsCollected": 57
+    }
+  }
+]

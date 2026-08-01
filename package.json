@@ -1,0 +1,27 @@
+{
+  "name": "ebayproductresearch",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "migrate": "drizzle-kit migrate",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.15.0",
+    "better-sqlite3": "^12.9.0",
+    "csv-parse": "^6.2.1",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.6.0",
+    "drizzle-kit": "^0.31.10",
+    "playwright": "^1.59.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
