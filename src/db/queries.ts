@@ -382,11 +382,6 @@ export async function archiveScoringResults(
 
       // Handle the 0 active supply pool anomaly to reflect true velocity
       let finalStrMetric = target.confidenceMetrics.sellThroughRate * 100;
-      if (finalStrMetric === 0 && target.targetResalePriceFloor > 0) {
-        // If active competition is 0, use standard high-volume indicator flag
-        finalStrMetric = 999.9;
-      }
-
       await db.insert(manifestLeaderboardHistory).values({
         productName: target.name,
         marketSellThroughRate: finalStrMetric,
