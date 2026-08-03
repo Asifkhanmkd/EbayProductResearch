@@ -641,7 +641,10 @@ export class SupplierManifestScanner {
 
       const costPerSingleUnit = item.wholesaleCost;
       const str = metrics
-        ? computeSellThrough(metrics.soldCount, metrics.activeCount)
+        ? computeSellThrough(
+            metrics.soldMarketCount ?? metrics.soldCount,
+            metrics.activeMarketCount ?? metrics.activeCount,
+          )
         : 0;
 
       const isViableMargin =

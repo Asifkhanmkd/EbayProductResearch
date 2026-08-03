@@ -4,6 +4,7 @@ import {
   computePriceBias,
   computeProgrammaticCash,
   computeSellThrough,
+  formatSellThroughLabel,
 } from "../../core/finance/marketMetrics";
 
 function approx(actual: number, expected: number, precision = 0.0001) {
@@ -13,7 +14,9 @@ function approx(actual: number, expected: number, precision = 0.0001) {
   );
 }
 
-approx(computeSellThrough(59, 47), 59 / 106);
+const waterpikStr = computeSellThrough(59, 47);
+approx(waterpikStr, 59 / 106);
+assert.equal(formatSellThroughLabel(waterpikStr), "Live Market STR: 55.7%");
 assert.equal(computeSellThrough(0, 47), 0);
 assert.equal(computeSellThrough(10, 0), 1);
 assert.equal(computeSellThrough(0, 0), 0);

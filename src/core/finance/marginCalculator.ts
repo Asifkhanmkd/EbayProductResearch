@@ -156,55 +156,64 @@ export function evaluateSourcingMargins(
 }
  */
 
+export interface FeeModel {
+  categoryFeePercent: number;
+  fixedFee: number;
+  postageEstimate: number;
+  promotedListingsPercent?: number;
+}
+
+export const DEFAULT_FEE_MODEL: FeeModel = {
+  categoryFeePercent: 0.135,
+  fixedFee: 0.3,
+  postageEstimate: 3.5,
+  promotedListingsPercent: 0,
+};
+
 export interface MarginConfig {
   targetResalePrice: number;
   targetRoi: number;
-  postageOverride?: number; // Category-agnostic field to handle custom shipping profiles dynamically
+  postageOverride?: number;
+  feeModel?: Partial<FeeModel>;
 }
 
 export interface FinancialCalculationOutput {
   ebayVariableFee: number;
   ebayFixedFee: number;
   postageCost: number;
+  promotedListingFee: number;
   requiredProfit: number;
   maxAllowableSourcingCost: number;
 }
 
 /**
- * PURE ECONOMIC ENGINE: Executes margin verification based on numeric parameters alone
+ * Calculates the MASC / Max Buy Ceiling.
+ * PROGRAMMATIC_CASH is calculated downstream as realizedValue - fees - postage - wholesaleCost.
+ * The ceiling additionally reserves target ROI so bids stay below the maximum safe sourcing cost.
  */
 export function evaluateSourcingMargins(
   config: MarginConfig,
 ): FinancialCalculationOutput {
-  const resalePrice = config.targetResalePrice;
+  const resalePrice = Math.max(0, config.targetResalePrice);
+  const feeModel: FeeModel = {
+    ...DEFAULT_FEE_MODEL,
+    ...config.feeModel,
+    postageEstimate: config.postageOverride ?? config.feeModel?.postageEstimate ?? DEFAULT_FEE_MODEL.postageEstimate,
+  };
 
-  // 1. Calculate baseline eBay UK Managed Payments processing overhead
-  const ebayVariableFee = resalePrice * 0.135;
-  const ebayFixedFee = 0.3;
-
-  // 2. Determine standard postage tiers dynamically based on item valuation bounds
-  let postageCost = 3.5; // Standard domestic tracked small parcel rate
-
-  if (resalePrice >= 150.0) {
-    postageCost = 7.5; // Premium courier tier with high-value insurance allocation
-  }
-
-  // 3. Apply the postage override parameter if an intelligence layer dictates custom specifications
-  if (config.postageOverride !== undefined) {
-    postageCost = config.postageOverride;
-  }
-
-  // 4. Set aside your strict capital return margin target
+  const ebayVariableFee = resalePrice * feeModel.categoryFeePercent;
+  const ebayFixedFee = feeModel.fixedFee;
+  const promotedListingFee = resalePrice * (feeModel.promotedListingsPercent ?? 0);
+  const postageCost = feeModel.postageEstimate;
   const requiredProfit = resalePrice * config.targetRoi;
-
-  // 5. Deduct all fees, postage costs, and target profits from gross revenue to establish your buying ceiling
   const maxAllowableSourcingCost =
-    resalePrice - ebayVariableFee - ebayFixedFee - postageCost - requiredProfit;
+    resalePrice - ebayVariableFee - ebayFixedFee - promotedListingFee - postageCost - requiredProfit;
 
   return {
     ebayVariableFee,
     ebayFixedFee,
     postageCost,
+    promotedListingFee,
     requiredProfit,
     maxAllowableSourcingCost: Math.max(0, maxAllowableSourcingCost),
   };

@@ -399,6 +399,7 @@ export const ebayClient = new EbayClient();
 import { getEbayAppToken } from "./ebayAuth";
 
 import { HtmlHistoryParser } from "../scrapper/soldScraper";
+import { MARKET_WINDOW_DAYS, MAX_ACTIVE_PAGES, MAX_SOLD_PAGES } from "./market/marketConfig";
 
 export interface SearchOptions {
   marketplace?: string;
@@ -448,54 +449,53 @@ export class EbayClient {
     useBarcodeIfAvailable: boolean,
   ) {
     const cleanKeyword = String(keyword ?? options.keyword ?? "").trim();
-    const { marketplace = "EBAY_GB", limit = 50, categoryId, gtin } = options;
-
+    const { marketplace = "EBAY_GB", limit = 50, categoryId, gtin, pages = MAX_ACTIVE_PAGES } = options;
     const token = await getEbayAppToken();
-    const url = new URL(
-      "https://api.ebay.com/buy/browse/v1/item_summary/search",
-    );
-
     const isBarcodeMode = !!(
       useBarcodeIfAvailable &&
       gtin &&
       gtin !== "UNKNOWN" &&
       /^\d{12,14}$/.test(gtin)
     );
-
-    if (isBarcodeMode && gtin) {
-      url.searchParams.set("gtin", gtin);
-    } else {
-      if (!cleanKeyword) return { items: [], totalMarketCount: 0 };
-      url.searchParams.set("q", cleanKeyword);
-    }
-
-    url.searchParams.set("limit", String(limit));
-    url.searchParams.set("offset", "0");
-    if (categoryId) url.searchParams.set("category_ids", categoryId);
-
-    const filterString = this.buildFilterString(options);
-    if (filterString) url.searchParams.set("filter", filterString);
-
-    console.log(
-      `🔍 Routing Profile: [${isBarcodeMode ? "TIER 1 BARCODE MODE" : "TIER 2 GENERIC TEXT MODE"}] [🛒 SUPPLY] -> "${isBarcodeMode ? gtin : cleanKeyword}"`,
-    );
+    const allItems: any[] = [];
+    let totalMarketCount = 0;
+    const pageCap = Math.max(1, pages);
 
     try {
-      const response = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "X-EBAY-C-MARKETPLACE-ID": marketplace,
-        },
-      });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const rawItems = data.itemSummaries || [];
-
+      for (let pageIndex = 0; pageIndex < pageCap; pageIndex++) {
+        const url = new URL("https://api.ebay.com/buy/browse/v1/item_summary/search");
+        if (isBarcodeMode && gtin) {
+          url.searchParams.set("gtin", gtin);
+        } else {
+          if (!cleanKeyword) return { items: [], totalMarketCount: 0 };
+          url.searchParams.set("q", cleanKeyword);
+        }
+        url.searchParams.set("limit", String(limit));
+        url.searchParams.set("offset", String(pageIndex * limit));
+        if (categoryId) url.searchParams.set("category_ids", categoryId);
+        const filterString = this.buildFilterString(options);
+        if (filterString) url.searchParams.set("filter", filterString);
+        console.log(
+          `🔍 Routing Profile: [${isBarcodeMode ? "TIER 1 BARCODE MODE" : "TIER 2 GENERIC TEXT MODE"}] [🛒 SUPPLY p${pageIndex + 1}/${pageCap}] -> "${isBarcodeMode ? gtin : cleanKeyword}"`,
+        );
+        const response = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": marketplace,
+          },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const rawItems = data.itemSummaries || [];
+        totalMarketCount = data.total ?? totalMarketCount ?? rawItems.length;
+        allItems.push(...rawItems);
+        // Stop once Browse metadata says we have covered all active results, or when eBay returns a short page.
+        if (rawItems.length < limit || allItems.length >= totalMarketCount) break;
+      }
       return {
-        items: this.deduplicateRawPayloads(rawItems),
-        totalMarketCount: data.total ?? rawItems.length,
+        items: this.deduplicateRawPayloads(allItems),
+        totalMarketCount: totalMarketCount || allItems.length,
       };
     } catch (error) {
       return { items: [], totalMarketCount: 0 };
@@ -529,7 +529,8 @@ export class EbayClient {
     try {
       const trueCompletedHistory = await HtmlHistoryParser.fetchSoldArchive(
         finalSearchAnchor,
-        1,
+        options.pages ?? MAX_SOLD_PAGES,
+        MARKET_WINDOW_DAYS,
       );
 
       return {
@@ -553,6 +554,8 @@ export class EbayClient {
       parts.push(`conditionIds:{${conditionIds.join("|")}}`);
     }
 
+    parts.push("buyingOptions:{FIXED_PRICE}");
+
     if (sellerCountries?.length) {
       parts.push(`itemLocationCountry:{${sellerCountries.join("|")}}`);
     } else {
@@ -563,11 +566,16 @@ export class EbayClient {
   }
 
   private deduplicateRawPayloads(items: any[]): any[] {
-    const seenUrls = new Set<string>();
+    const seenKeys = new Set<string>();
     return items.filter((item) => {
-      const url = item.itemWebUrl || item.itemId;
-      if (!url || seenUrls.has(url)) return false;
-      seenUrls.add(url);
+      const title = String(item.title || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const seller = item.seller?.username || "UNKNOWN";
+      const price = item.price?.value ? Number(item.price.value).toFixed(2) : "0.00";
+      const primaryKey = item.itemWebUrl || item.itemId;
+      const relistKey = `${item.itemId || "NO_ID"}|${seller}|${title}|${price}`;
+      const key = primaryKey ? `${primaryKey}|${relistKey}` : relistKey;
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
       return true;
     });
   }

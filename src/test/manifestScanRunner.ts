@@ -8,7 +8,7 @@ import { MarketPipelineAdapter } from "../core/market/marketAdapter";
 import { ebayClient } from "../core/ebayClient";
 import { HtmlHistoryParser } from "../scrapper/soldScraper";
 import { PurchaseOrderGenerator } from "../core/finance/poGenerator";
-import { executeSemanticResilientSearch } from "../lib/searchEngine";
+import { buildResearchKeyword } from "../core/market/keywordBuilder";
 
 import {
   runEmbeddedMigrations,
@@ -93,18 +93,8 @@ async function runUnifiedPortfolioScan() {
             continue;
           }
 
-          const cleanTokens = item.name
-            .replace(/[^\w\s\.]/g, " ")
-            .toLowerCase()
-            .split(/\s+/)
-            .filter((token) => {
-              if (/^\d+(ml|g|oz|kg)$/i.test(token)) return true;
-              return !GLOBAL_NOISE_MODIFIERS.has(token);
-            })
-            .filter(Boolean);
-
-          const queryKeyword: string =
-            cleanTokens.slice(0, 5).join(" ").trim() || "";
+          const keywordPlan = buildResearchKeyword(item);
+          const queryKeyword = keywordPlan.exactKeyword;
 
           try {
             console.log(
@@ -221,37 +211,11 @@ async function runUnifiedPortfolioScan() {
             } */
 
             // ==================================================================
-            // 🛡️ API RESILIENCE LAYER: SMART OR-SEARCH & SEMANTIC FILTERING
+            // 🛡️ CATEGORY FALLBACK POLICY
             // ==================================================================
-            if (rawActiveItems.length === 0) {
-              // 1. Extract the product noun dynamically from the end of the query string
-              const tokens = queryKeyword.split(/\s+/);
-              const productNoun = tokens[tokens.length - 1];
-
-              console.log(
-                `   ⚠️ [API Catalog Restriction]: 0 active items found for strict query. Executing Smart OR Search...`,
-              );
-
-              // 2. Execute the Smart OR Search with Semantic Post-Filtering via our new engine
-              const searchResult = await executeSemanticResilientSearch(
-                queryKeyword,
-                productNoun,
-                ebayClient,
-              );
-
-              rawActiveItems = searchResult.items;
-              if (searchResult.isTextFallback) {
-                triggeredTextFallback = true;
-              }
-
-              // If zero items pass the semantic filter, log the restriction safely
-              if (rawActiveItems.length === 0) {
-                console.log(
-                  `   ⚠️ [API Catalog Restriction]: No semantically valid items found for product type "${productNoun}".`,
-                );
-              }
-            }
-            // ==================================================================
+            // Do not widen exact-SKU sourcing metrics to generic category searches.
+            // If exact sold and active are both empty, categoryKeyword can be used for
+            // exploratory research elsewhere, but not for per-SKU leaderboard STR/profit.
             // ==================================================================
 
             // 2. Await your background sold history entries here before processing data metrics
@@ -273,10 +237,10 @@ async function runUnifiedPortfolioScan() {
               `   ├── [Results Collected]: "${item.name.slice(0, 20)}..."`,
             );
             console.log(
-              `   │   ├── Active Pool: ${cleanMetrics.activeCount} matches. Median Asking: £${cleanMetrics.avgActivePrice.toFixed(2)}`,
+              `   │   ├── Active Pool (market): ${cleanMetrics.activeMarketCount ?? cleanMetrics.activeCount} listings, price samples: ${cleanMetrics.activePriceSampleCount ?? cleanMetrics.activeCount}. Median Asking: £${cleanMetrics.avgActivePrice.toFixed(2)}`,
             );
             console.log(
-              `   │   └── Realized Sales: ${cleanMetrics.soldCount} matches. Median Realized: £${cleanMetrics.avgSoldPrice.toFixed(2)}`,
+              `   │   └── Realized Sales (market): ${cleanMetrics.soldMarketCount ?? cleanMetrics.soldCount} sales, price samples: ${cleanMetrics.soldPriceSampleCount ?? cleanMetrics.soldCount}. Median Realized: £${cleanMetrics.avgSoldPrice.toFixed(2)}`,
             );
 
             // Persist metrics back to your live metrics table
@@ -326,6 +290,10 @@ async function runUnifiedPortfolioScan() {
       avgSoldPrice: v.avgSoldPrice,
       activeCount: v.activeCount,
       soldCount: v.soldCount,
+      activeMarketCount: v.activeMarketCount ?? v.activeCount,
+      soldMarketCount: v.soldMarketCount ?? v.soldCount,
+      activePriceSampleCount: v.activePriceSampleCount ?? v.activeCount,
+      soldPriceSampleCount: v.soldPriceSampleCount ?? v.soldCount,
       sampleDensity: v.sampleDensity,
       priceVolatility: 0,
     });
@@ -366,8 +334,10 @@ async function runUnifiedPortfolioScan() {
           ? {
               medianActiveAskingPrice: originalMetrics.avgActivePrice,
               medianRealizedSoldPrice: originalMetrics.avgSoldPrice,
-              liveActiveCompetitorCount: originalMetrics.activeCount,
-              historicalTransactionsCollected: originalMetrics.soldCount,
+              liveActiveCompetitorCount: originalMetrics.activeMarketCount ?? originalMetrics.activeCount,
+              historicalTransactionsCollected: originalMetrics.soldMarketCount ?? originalMetrics.soldCount,
+              activePriceSamples: originalMetrics.activePriceSampleCount ?? originalMetrics.activeCount,
+              soldPriceSamples: originalMetrics.soldPriceSampleCount ?? originalMetrics.soldCount,
             }
           : null,
       };
@@ -412,8 +382,8 @@ async function runUnifiedPortfolioScan() {
    ├── Max Buy Ceiling: £${target.maxAllowableSourcingCost.toFixed(2)} (MASC Safety Ceiling)
    ├── PROGRAMMATIC CASH: £${target.projectedNetProfitPerUnit.toFixed(2)} net profit cash/unit
    └── STABILITY METRICS:
-       ├── Data Density:     [${originalMetrics.sampleDensity} samples clean]
-       ├── Sell-Through Vol: [${originalMetrics.soldCount} historical units]
+       ├── Data Density:     [${originalMetrics.sampleDensity} clean price samples]
+       ├── Sell-Through Vol: [${originalMetrics.soldMarketCount ?? originalMetrics.soldCount} market sales]
        ├── Live Market STR:  [${(target.confidenceMetrics.sellThroughRate * 100).toFixed(1)}%] STR
        ├── Value Price Bias: [${(target.confidenceMetrics.soldActiveDivergence * 100).toFixed(1)}%] Asking Premium
        └── LIQUIDITY RISK:   ✨ ${target.confidenceMetrics.liquidityRiskRating} RISK ALLOCATION`);

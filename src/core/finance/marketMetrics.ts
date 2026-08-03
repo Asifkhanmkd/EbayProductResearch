@@ -85,3 +85,7 @@ export function computeProgrammaticCash(
     netProfit,
   };
 }
+
+export function formatSellThroughLabel(sellThroughRate: number): string {
+  return `Live Market STR: ${(sellThroughRate * 100).toFixed(1)}%`;
+}
