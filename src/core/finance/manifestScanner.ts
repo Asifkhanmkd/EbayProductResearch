@@ -478,6 +478,7 @@ import { parse } from "csv-parse/sync";
 import { evaluateSourcingMargins } from "./marginCalculator";
 import { parsePrice } from "../../scrapper/soldNormalize";
 import { LogisticsEngine } from "../shipping/logisticsEngine";
+import { computePriceBias, computeSellThrough } from "./marketMetrics";
 
 export interface WholesaleItem {
   gtin: string;
@@ -639,10 +640,12 @@ export class SupplierManifestScanner {
       });
 
       const costPerSingleUnit = item.wholesaleCost;
-      const str =
-        metrics && metrics.activeCount > 0
-          ? metrics.soldCount / metrics.activeCount
-          : 0;
+      const str = metrics
+        ? computeSellThrough(
+            metrics.soldMarketCount ?? metrics.soldCount,
+            metrics.activeMarketCount ?? metrics.activeCount,
+          )
+        : 0;
 
       const isViableMargin =
         targetResaleFloor > 0 &&
@@ -672,11 +675,9 @@ export class SupplierManifestScanner {
         confidenceMetrics: {
           dataConfidenceScore: 1.0,
           sellThroughRate: str,
-          soldActiveDivergence:
-            metrics && metrics.avgSoldPrice > 0
-              ? (metrics.avgActivePrice - metrics.avgSoldPrice) /
-                metrics.avgSoldPrice
-              : 0,
+          soldActiveDivergence: metrics
+            ? computePriceBias(metrics.avgActivePrice, metrics.avgSoldPrice)
+            : 0,
           liquidityRiskRating: isViable ? "LOW" : "CRITICAL",
         },
       };

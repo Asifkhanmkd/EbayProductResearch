@@ -1,6 +1,7 @@
 import { chromium, Page, BrowserContext } from "playwright";
 import { RawSoldPayload } from "../core/market/soldDto";
 import { config } from "../utils/config";
+import { MARKET_WINDOW_DAYS, MAX_SOLD_PAGES } from "../core/market/marketConfig";
 
 export interface ScrapedRowItem {
   title: string | null;
@@ -252,9 +253,26 @@ export class HtmlHistoryParser {
   /**
    * HIGH-PERFORMANCE SCRAPING GATE WITH STRICT UN-BLOCKABLE SPEED ALIGNMENT
    */
+  public static parseSoldDate(raw: string | null, now = new Date()): Date | null {
+    if (!raw) return null;
+    const cleaned = raw.replace(/Sold/i, "").replace(/,/g, "").trim();
+    const withYear = /\b\d{4}\b/.test(cleaned) ? cleaned : `${cleaned} ${now.getUTCFullYear()}`;
+    const parsed = new Date(`${withYear} UTC`);
+    if (Number.isNaN(parsed.getTime())) return null;
+    if (parsed.getTime() > now.getTime()) parsed.setUTCFullYear(parsed.getUTCFullYear() - 1);
+    return parsed;
+  }
+
+  private static isWithinMarketWindow(date: Date | null, windowDays: number, now = new Date()): boolean {
+    if (!date) return false;
+    const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
+    return date.getTime() >= cutoff.getTime();
+  }
+
   public static async fetchSoldArchive(
     keyword: string,
-    maxPages = 1,
+    maxPages = MAX_SOLD_PAGES,
+    windowDays = MARKET_WINDOW_DAYS,
   ): Promise<RawSoldPayload[]> {
     if (!keyword || keyword.trim() === "") return [];
 
@@ -303,13 +321,22 @@ export class HtmlHistoryParser {
         }
 
         const items = await this.extractRawItems(page);
+        const recentItems = items.filter((item) =>
+          this.isWithinMarketWindow(this.parseSoldDate(item.soldDateRaw), windowDays),
+        );
+        const pageHasOlderSold = items.some(
+          (item) => !this.isWithinMarketWindow(this.parseSoldDate(item.soldDateRaw), windowDays),
+        );
+        const hasNextPage = await page.locator('a[aria-label="Go to next search page"], a.pagination__next').count() > 0;
 
         console.log(
-          `🕵️ [Playwright Debug]: Extracted ${items.length} raw historical items from DOM for keyword: "${keyword}"`,
+          `🕵️ [Playwright Debug]: Extracted ${items.length} raw historical items (${recentItems.length} within ${windowDays}d) from DOM for keyword: "${keyword}"`,
         );
         if (items.length === 0) break;
 
-        allFinalResults.push(...items);
+        allFinalResults.push(...recentItems);
+        // Stop once completed listings fall outside the configured market window or eBay exposes no next page.
+        if (pageHasOlderSold || !hasNextPage) break;
         if (pageNum < maxPages) await this.randomDelay(200, 800);
       }
     } catch (err) {
@@ -325,7 +352,10 @@ export class HtmlHistoryParser {
 
     const uniqueMap = new Map<string, ScrapedRowItem>();
     for (const item of allFinalResults) {
-      if (item && item.url) uniqueMap.set(item.url, item);
+      const normalizedTitle = (item.title || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const closePrice = item.priceRaw ? item.priceRaw.replace(/[^\d.]/g, "") : "0";
+      const dedupeKey = item.url || `${normalizedTitle}|${item.sellerRaw || "UNKNOWN"}|${closePrice}|${item.soldDateRaw || ""}`;
+      if (item) uniqueMap.set(dedupeKey, item);
     }
     const dedupedRaw = Array.from(uniqueMap.values());
 

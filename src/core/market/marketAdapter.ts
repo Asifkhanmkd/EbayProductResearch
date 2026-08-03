@@ -4,10 +4,14 @@ import { ActiveDto, RawActivePayload } from './activeDto';
 import { SoldDto, RawSoldPayload } from './soldDto';
 
 export interface CleanMarketContainer {
-  avgActivePrice: number; 
-  avgSoldPrice: number;   
+  avgActivePrice: number;
+  avgSoldPrice: number;
   activeCount: number;
   soldCount: number;
+  activeMarketCount?: number;
+  soldMarketCount?: number;
+  activePriceSampleCount?: number;
+  soldPriceSampleCount?: number;
   sampleDensity: number;
   marketRealityAlert: boolean;
 }
@@ -108,13 +112,21 @@ export class MarketPipelineAdapter {
 
     const cleanActivePrices = this.suppressOutliersAdaptive(rawActivePrices);
     const cleanSoldPrices = this.suppressOutliersAdaptive(rawSoldPrices);
+    const activeMarketCount = activeDtos.length;
+    const soldMarketCount = soldDtos.length;
+    const activePriceSampleCount = cleanActivePrices.length;
+    const soldPriceSampleCount = cleanSoldPrices.length;
 
     return {
       avgActivePrice: this.calculateMedian(cleanActivePrices),
       avgSoldPrice: this.calculateMedian(cleanSoldPrices),
-      activeCount: cleanActivePrices.length,
-      soldCount: cleanSoldPrices.length,
-      sampleDensity: cleanActivePrices.length + cleanSoldPrices.length,
+      activeCount: activeMarketCount,
+      soldCount: soldMarketCount,
+      activeMarketCount,
+      soldMarketCount,
+      activePriceSampleCount,
+      soldPriceSampleCount,
+      sampleDensity: activePriceSampleCount + soldPriceSampleCount,
       marketRealityAlert: false
     };
   }
