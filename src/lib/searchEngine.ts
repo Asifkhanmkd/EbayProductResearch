@@ -1,5 +1,3 @@
-// src/lib/searchEngine.ts
-
 export async function executeSemanticResilientSearch(
   fullQuery: string,
   noun: string,

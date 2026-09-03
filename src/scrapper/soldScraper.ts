@@ -1,7 +1,10 @@
 import { chromium, Page, BrowserContext } from "playwright";
 import { RawSoldPayload } from "../core/market/soldDto";
 import { config } from "../utils/config";
-import { MARKET_WINDOW_DAYS, MAX_SOLD_PAGES } from "../core/market/marketConfig";
+import {
+  MARKET_WINDOW_DAYS,
+  MAX_SOLD_PAGES,
+} from "../core/market/marketConfig";
 
 export interface ScrapedRowItem {
   title: string | null;
@@ -12,6 +15,16 @@ export interface ScrapedRowItem {
   shippingRaw: string | null;
   condition: string;
 }
+
+// ✅ FIX: sanity ceiling. No listing in these categories should
+// realistically exceed this — anything above it is almost certainly a
+// scraped-text concatenation bug (a price range, a hidden date/ID
+// string, or a currency-conversion estimate glued onto the real price
+// once all non-digit characters get stripped). Discarding it (setting
+// price to 0) lets it fall out of the price arrays downstream exactly
+// like any other unparseable price already does, instead of silently
+// poisoning a segment's median.
+const MAX_PLAUSIBLE_PRICE_GBP = 10000;
 
 export class HtmlHistoryParser {
   private static sharedContext: BrowserContext | null = null;
@@ -39,15 +52,13 @@ export class HtmlHistoryParser {
       this.sharedContext = await chromium.launchPersistentContext(
         "./user-data",
         {
-          headless: true, // Seamless background enterprise operations
+          headless: config.headless,
+          slowMo: 500,
           viewport: { width: 1280, height: 720 },
           userAgent:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
           locale: "en-GB",
-          // ✅ HIGH-SPEED BINARY INJECTION FLAGS:
-          // Instructs the Chromium process itself to block heavy layout extensions and plugins completely
           args: [
-            "--blink-settings=imagesEnabled=false", // Kills all image asset fetching natively
             "--disable-extensions",
             "--disable-component-extensions-with-background-pages",
             "--disable-default-apps",
@@ -57,7 +68,6 @@ export class HtmlHistoryParser {
         },
       );
 
-      // ➔ INJECT COOKIES HERE RIGHT AFTER CONTEXT INITIALIZATION
       const clientCookies = config.ebayCookieString;
 
       if (!clientCookies) {
@@ -77,14 +87,11 @@ export class HtmlHistoryParser {
       });
       await this.sharedContext.addCookies(parsedCookies);
 
-      // ✅ GLOBAL CONTEXT ROUTE LOCK: Configured once at startup, NOT on every page tab instantiation
       await this.sharedContext.route("**/*", (route) => {
         const type = route.request().resourceType();
         const url = route.request().url().toLowerCase();
 
-        // Drop layout files, tracking matrices, and analytical analytics scripts immediately
         if (
-          ["stylesheet", "font", "media", "image"].includes(type) ||
           url.includes("analytics") ||
           url.includes("doubleclick") ||
           url.includes("ebaystatic.com/ur")
@@ -135,7 +142,7 @@ export class HtmlHistoryParser {
             clearInterval(timer);
             resolve();
           }
-        }, 100); // Accelerated scroll cadence
+        }, 100);
       });
     });
   }
@@ -156,17 +163,14 @@ export class HtmlHistoryParser {
   }
 
   private static async extractRawItems(page: Page): Promise<ScrapedRowItem[]> {
-    // ✅ Target any structural container or list element inside the search results frame
     return await page.$$eval("li, div.s-card, div.s-item", (elements) => {
       return elements
         .map((el) => {
-          // Ensure we are looking at an actual product card container by checking for text length or structural presence
           const textContent = el.textContent ?? "";
           if (!textContent.includes("£") && !textContent.includes("Sold")) {
             return null;
           }
 
-          // 1. Extract Title: look for heading elements or styled text inside the card
           const headingEl = el.querySelector(
             '[role="heading"], h3, .s-card__title, .s-item__title',
           );
@@ -182,7 +186,6 @@ export class HtmlHistoryParser {
           if (!title || title === "Shop on eBay" || title.length < 5)
             return null;
 
-          // 2. Extract Link / URL
           const linkEl = el.querySelector(
             'a[href*="/itm/"]',
           ) as HTMLAnchorElement | null;
@@ -196,7 +199,25 @@ export class HtmlHistoryParser {
               node.children.length === 0 &&
               /[£$€]\s?\d+/.test(node.textContent ?? ""),
           );
-          const priceRaw = priceCandidates[0]?.textContent?.trim() ?? null;
+
+          const rawCandidateText =
+            priceCandidates[0]?.textContent?.trim() ?? null;
+
+          // ✅ FIX: extract ONLY the first well-formed currency amount
+          // from the candidate node's text, instead of taking its full
+          // textContent verbatim. A leaf node's text can still contain
+          // more than just the price — a price RANGE for multi-variation
+          // listings ("£19.35 to £399.00"), a currency-conversion
+          // estimate, or other adjacent digits with no separating
+          // whitespace. Downstream code strips every non-digit
+          // character to parse the number, so any extra digit sequence
+          // left in priceRaw gets silently concatenated onto the real
+          // price. Matching a single "£<digits><.digits>" pattern here
+          // closes off that entire failure class at the source.
+          const priceMatch = rawCandidateText?.match(
+            /[£$€]\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/,
+          );
+          const priceRaw = priceMatch ? priceMatch[0] : rawCandidateText;
 
           // 4. Extract Sold Date: look for strings matching "Sold" patterns
           const soldDateNode = Array.from(
@@ -208,10 +229,8 @@ export class HtmlHistoryParser {
           );
           const soldDateRaw = soldDateNode?.textContent?.trim() ?? null;
 
-          // If no "Sold" indicator node is found in this element block, skip it to ensure accurate realized metrics
           if (!soldDateRaw) return null;
 
-          // 5. Extract Shipping & Seller info from inner text rows
           const rows = Array.from(el.querySelectorAll("div, span")).map(
             (n) => n.textContent?.trim() || "",
           );
@@ -220,7 +239,6 @@ export class HtmlHistoryParser {
           const sellerRaw =
             rows.find((r) => r.includes("100%") || /\(\d+\)/.test(r)) || null;
 
-          // 6. Extract Condition
           const conditionMatch = textContent.match(
             /Parts only|For parts or not working|Pre-owned|Used|Brand new|Opened – never used|Refurbished/i,
           );
@@ -242,7 +260,6 @@ export class HtmlHistoryParser {
           };
         })
         .filter((x, index, self): x is NonNullable<typeof x> => {
-          // Filter out nulls and deduplicate by URL or title
           if (!x) return false;
           if (index === 0) return true;
           const prev = self[index - 1];
@@ -250,20 +267,28 @@ export class HtmlHistoryParser {
         });
     });
   }
-  /**
-   * HIGH-PERFORMANCE SCRAPING GATE WITH STRICT UN-BLOCKABLE SPEED ALIGNMENT
-   */
-  public static parseSoldDate(raw: string | null, now = new Date()): Date | null {
+
+  public static parseSoldDate(
+    raw: string | null,
+    now = new Date(),
+  ): Date | null {
     if (!raw) return null;
     const cleaned = raw.replace(/Sold/i, "").replace(/,/g, "").trim();
-    const withYear = /\b\d{4}\b/.test(cleaned) ? cleaned : `${cleaned} ${now.getUTCFullYear()}`;
+    const withYear = /\b\d{4}\b/.test(cleaned)
+      ? cleaned
+      : `${cleaned} ${now.getUTCFullYear()}`;
     const parsed = new Date(`${withYear} UTC`);
     if (Number.isNaN(parsed.getTime())) return null;
-    if (parsed.getTime() > now.getTime()) parsed.setUTCFullYear(parsed.getUTCFullYear() - 1);
+    if (parsed.getTime() > now.getTime())
+      parsed.setUTCFullYear(parsed.getUTCFullYear() - 1);
     return parsed;
   }
 
-  private static isWithinMarketWindow(date: Date | null, windowDays: number, now = new Date()): boolean {
+  private static isWithinMarketWindow(
+    date: Date | null,
+    windowDays: number,
+    now = new Date(),
+  ): boolean {
     if (!date) return false;
     const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
     return date.getTime() >= cutoff.getTime();
@@ -273,6 +298,7 @@ export class HtmlHistoryParser {
     keyword: string,
     maxPages = MAX_SOLD_PAGES,
     windowDays = MARKET_WINDOW_DAYS,
+    categoryId?: string,
   ): Promise<RawSoldPayload[]> {
     if (!keyword || keyword.trim() === "") return [];
 
@@ -283,60 +309,102 @@ export class HtmlHistoryParser {
     const allFinalResults: ScrapedRowItem[] = [];
 
     try {
-      const baseSearchUrl = `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(keyword)}&LH_Sold=1&LH_Complete=1`;
+      const categoryParam = categoryId
+        ? `&_sacat=${encodeURIComponent(categoryId)}`
+        : "";
+      const baseSearchUrl = `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(keyword)}${categoryParam}&LH_Sold=1&LH_Complete=1`;
 
       for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
         const searchUrl =
           pageNum === 1 ? baseSearchUrl : `${baseSearchUrl}&_pgn=${pageNum}`;
 
-        console.log(
-          `🕵️ [Playwright Debug]: Navigating to sold search URL: "${searchUrl}"`,
-        );
+        const MAX_PAGE_ATTEMPTS = 3;
+        let pageSucceeded = false;
+        let items: ScrapedRowItem[] = [];
 
-        // ✅ SECURE SPEED VECTOR: Uses quick domcontentloaded parsing with a conservative 15s execution threshold
-        await page.goto(searchUrl, {
-          //waitUntil: "domcontentloaded",
-          waitUntil: "load",
+        for (
+          let attempt = 1;
+          attempt <= MAX_PAGE_ATTEMPTS && !pageSucceeded;
+          attempt++
+        ) {
+          try {
+            console.log(
+              `🕵️ [Playwright Debug]: Navigating to sold search URL: "${searchUrl}"${attempt > 1 ? ` (retry ${attempt}/${MAX_PAGE_ATTEMPTS})` : ""}`,
+            );
 
-          timeout: 15000,
-        });
+            await page.goto(searchUrl, {
+              waitUntil: "load",
+              timeout: 15000,
+            });
 
-        if (pageNum === 1) {
-          await this.handleCookieBanner(page);
+            if (pageNum === 1) {
+              await this.handleCookieBanner(page);
+            }
+
+            await this.simulateHuman(page);
+
+            try {
+              await this.autoScroll(page);
+            } catch (scrollErr) {
+              console.log(
+                `   ⚠️ Auto-scroll interrupted for "${keyword}" (likely a redirect/popup) — continuing without it.`,
+              );
+            }
+
+            try {
+              await page.waitForSelector(".s-item, .s-card, li.s-item", {
+                timeout: 8000,
+              });
+            } catch (selectorErr) {
+              const contentSnippet = await page.content();
+              console.log(
+                `🕵️ [Playwright Debug]: Selector timeout for keyword: "${keyword}". HTML Page Length: ${contentSnippet.length}`,
+              );
+              break;
+            }
+
+            items = await this.extractRawItems(page);
+            pageSucceeded = true;
+          } catch (pageErr) {
+            console.log(
+              `   ⚠️ Page ${pageNum} attempt ${attempt}/${MAX_PAGE_ATTEMPTS} failed for "${keyword}": ${(pageErr as Error).message}`,
+            );
+            if (attempt < MAX_PAGE_ATTEMPTS) {
+              await this.randomDelay(500, 1200);
+            }
+          }
         }
 
-        await this.simulateHuman(page);
-        await this.autoScroll(page);
-
-        try {
-          await page.waitForSelector(".s-item, .s-card, li.s-item", {
-            timeout: 8000,
-          });
-        } catch (selectorErr) {
-          const contentSnippet = await page.content();
+        if (!pageSucceeded) {
           console.log(
-            `🕵️ [Playwright Debug]: Selector timeout for keyword: "${keyword}". HTML Page Length: ${contentSnippet.length}`,
+            `   ❌ Page ${pageNum} failed after ${MAX_PAGE_ATTEMPTS} attempts for "${keyword}" — keeping ${allFinalResults.length} items already collected, stopping pagination here.`,
           );
           break;
         }
 
-        const items = await this.extractRawItems(page);
         const recentItems = items.filter((item) =>
-          this.isWithinMarketWindow(this.parseSoldDate(item.soldDateRaw), windowDays),
+          this.isWithinMarketWindow(
+            this.parseSoldDate(item.soldDateRaw),
+            windowDays,
+          ),
         );
-        const pageHasOlderSold = items.some(
-          (item) => !this.isWithinMarketWindow(this.parseSoldDate(item.soldDateRaw), windowDays),
-        );
-        const hasNextPage = await page.locator('a[aria-label="Go to next search page"], a.pagination__next').count() > 0;
+
+        const hasNextPage =
+          (await page
+            .locator(
+              'a[aria-label="Go to next search page"], a.pagination__next',
+            )
+            .count()) > 0;
 
         console.log(
           `🕵️ [Playwright Debug]: Extracted ${items.length} raw historical items (${recentItems.length} within ${windowDays}d) from DOM for keyword: "${keyword}"`,
         );
+
         if (items.length === 0) break;
 
         allFinalResults.push(...recentItems);
-        // Stop once completed listings fall outside the configured market window or eBay exposes no next page.
-        if (pageHasOlderSold || !hasNextPage) break;
+
+        if (!hasNextPage) break;
         if (pageNum < maxPages) await this.randomDelay(200, 800);
       }
     } catch (err) {
@@ -344,17 +412,22 @@ export class HtmlHistoryParser {
         `❌ [Playwright Error]: Exception caught during fetchSoldArchive for "${keyword}":`,
         err,
       );
-
-      // Swallows timeouts gracefully to prevent loop execution failures
     } finally {
       await page.close();
     }
 
     const uniqueMap = new Map<string, ScrapedRowItem>();
     for (const item of allFinalResults) {
-      const normalizedTitle = (item.title || "").toLowerCase().replace(/\s+/g, " ").trim();
-      const closePrice = item.priceRaw ? item.priceRaw.replace(/[^\d.]/g, "") : "0";
-      const dedupeKey = item.url || `${normalizedTitle}|${item.sellerRaw || "UNKNOWN"}|${closePrice}|${item.soldDateRaw || ""}`;
+      const normalizedTitle = (item.title || "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+      const closePrice = item.priceRaw
+        ? item.priceRaw.replace(/[^\d.]/g, "")
+        : "0";
+      const dedupeKey =
+        item.url ||
+        `${normalizedTitle}|${item.sellerRaw || "UNKNOWN"}|${closePrice}|${item.soldDateRaw || ""}`;
       if (item) uniqueMap.set(dedupeKey, item);
     }
     const dedupedRaw = Array.from(uniqueMap.values());
@@ -377,6 +450,21 @@ export class HtmlHistoryParser {
         ? 0
         : parseFloat(cleanShippingStr) || 0;
 
+      let parsedPrice = parseFloat(cleanPriceStr) || 0;
+
+      // ✅ FIX: sanity backstop. If the regex fix above still lets
+      // something implausible through (e.g. an unusual DOM layout we
+      // haven't seen yet), discard it here rather than let it corrupt
+      // a segment's median. Setting price to 0 lets it fall out of
+      // downstream price arrays exactly like any other unparseable
+      // price already does.
+      if (parsedPrice > MAX_PLAUSIBLE_PRICE_GBP) {
+        console.log(
+          `   ⚠️ Discarding implausible scraped price £${parsedPrice.toFixed(2)} for "${item.title}" (raw: "${item.priceRaw}") — likely a text-concatenation parsing bug.`,
+        );
+        parsedPrice = 0;
+      }
+
       const payload: ExtendedSoldPayload = {
         itemId: item.url
           ? item.url.match(/itm\/(\d+)/)?.[1] ||
@@ -384,7 +472,7 @@ export class HtmlHistoryParser {
           : `scraped-${Math.random().toString(36).substring(7)}`,
         title: item.title || "Unknown Completed Sale Descriptor",
         price: {
-          value: cleanPriceStr || "0.00",
+          value: parsedPrice > 0 ? parsedPrice.toFixed(2) : "0.00",
           currency: "GBP",
         },
         condition: item.condition,
